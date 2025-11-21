@@ -3,10 +3,10 @@ resource "random_password" "user_password" {
   special = true
 }
 
-resource "azuread_user" "creat_user" {
+resource "azuread_user" "ad_users" {
   for_each = var.users
 
-  user_principal_name = "${each.key}@yourtenant.onmicrosoft.com"
+  user_principal_name = "${each.key}@ferents1vladeslavgmail.onmicrosoft.com"
   display_name        = each.value.display_name
   mail_nickname       = each.key
   job_title           = "IT Lab Administrator"
@@ -19,10 +19,10 @@ resource "azuread_user" "creat_user" {
 }
 
 resource "azuread_invitation" "guest" {
-  user_email                = "vladyslav.ferents.22@pnu.edu.ua"
-  invite_redirect_url       = "https://portal.azure.com"
-  invited_user_display_name = "Vladyslav Guest"
-  message                   = "Welcome to Azure and our group project"
+  user_email_address = "vladyslav.ferents.22@pnu.edu.ua"
+  redirect_url       = "https://portal.azure.com"
 
-  send_invitation_message = true
+  message {
+    body = "Welcome to Azure and our group project!"
+  }
 }

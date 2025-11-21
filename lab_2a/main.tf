@@ -20,19 +20,14 @@ provider "azuread" {}
 
 data "azurerm_subscription" "current" {}
 
-data "azurerm_management_group" "root" {
-  name = "Tenant Root Group"
-}
-
 resource "azurerm_management_group" "mg1" {
-  display_name              = "az104-mg1"
-  name                      = "az104-mg1"
-  parent_management_group_id = data.azurerm_management_group.root.id
+  display_name = "az104-mg1"
+  name         = "az104-mg1"
 }
 
-variable "helpdesk_object_id" {
-  description = "Object ID групи helpdesk в Entra ID"
-  type        = string
+resource "azuread_group" "helpdesk" {
+  display_name     = "helpdesk"
+  security_enabled = true
 }
 
 data "azurerm_management_group" "mg1_ref" {
@@ -42,21 +37,21 @@ data "azurerm_management_group" "mg1_ref" {
 resource "azurerm_role_assignment" "vm_contributor_to_helpdesk" {
   scope                = data.azurerm_management_group.mg1_ref.id
   role_definition_name = "Virtual Machine Contributor"
-  principal_id         = var.helpdesk_object_id
+  principal_id         = azuread_group.helpdesk.object_id
   principal_type       = "Group"
 }
 
 resource "azurerm_role_definition" "custom_support_request" {
-  name        = "Custom Support Request"
+  name        = "CustomSupportRequest"
   scope       = data.azurerm_management_group.mg1_ref.id
-  description = "A custom contributor role for support requests."
+  description = "Custom role for support-related operations."
 
   permissions {
     actions = [
       "Microsoft.Support/*/read",
-      "Microsoft.Support/supportServices/*",
       "Microsoft.Compute/virtualMachines/*"
     ]
+
     not_actions = [
       "Microsoft.Support/register/action"
     ]
@@ -70,6 +65,6 @@ resource "azurerm_role_definition" "custom_support_request" {
 resource "azurerm_role_assignment" "custom_support_request_to_helpdesk" {
   scope              = data.azurerm_management_group.mg1_ref.id
   role_definition_id = azurerm_role_definition.custom_support_request.id
-  principal_id       = var.helpdesk_object_id
+  principal_id       = azuread_group.helpdesk.object_id
   principal_type     = "Group"
 }

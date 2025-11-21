@@ -12,8 +12,6 @@ terraform {
   required_version = ">= 1.1.0"
 }
 
-provider "azuread" {
-  features {}
-}
+provider "azuread" {}
 
 data "azuread_client_config" "current" {}
