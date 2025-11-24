@@ -11,7 +11,7 @@ variable "admin_username" {
   default = "azureuser"
 }
 variable "admin_password" {
-  type    = string
+  type        = string
   description = "Use a secure password (or switch to SSH keys)."
-  type = string
+  sensitive   = true
 }

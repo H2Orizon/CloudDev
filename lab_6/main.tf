@@ -68,7 +68,6 @@ resource "azurerm_lb_backend_address_pool" "lb_be" {
 
 resource "azurerm_lb_probe" "lb_probe" {
   name                = "az104-hp"
-  resource_group_name = azurerm_resource_group.rg.name
   loadbalancer_id     = azurerm_lb.lb.id
   protocol            = "Tcp"
   port                = 80
@@ -78,14 +77,20 @@ resource "azurerm_lb_probe" "lb_probe" {
 
 resource "azurerm_lb_rule" "lb_rule" {
   name                           = "az104-lbrule"
-  resource_group_name            = azurerm_resource_group.rg.name
   loadbalancer_id                = azurerm_lb.lb.id
   protocol                       = "Tcp"
   frontend_port                  = 80
   backend_port                   = 80
   frontend_ip_configuration_name = "az104-fe"
-  backend_address_pool_id        = azurerm_lb_backend_address_pool.lb_be.id
   probe_id                       = azurerm_lb_probe.lb_probe.id
+}
+
+resource "azurerm_network_interface_backend_address_pool_association" "nic_lb" {
+  count = 2
+
+  network_interface_id    = azurerm_network_interface.nic[count.index].id
+  ip_configuration_name   = "ipconfig"
+  backend_address_pool_id = azurerm_lb_backend_address_pool.lb_be.id
 }
 
 resource "azurerm_network_interface" "nic" {
@@ -99,16 +104,15 @@ resource "azurerm_network_interface" "nic" {
     subnet_id                     = element([azurerm_subnet.subnet_vm0.id, azurerm_subnet.subnet_vm1.id, azurerm_subnet.subnet_vm2.id], count.index)
     private_ip_address_allocation = "Static"
     private_ip_address            = element(["10.60.1.4","10.60.2.4","10.60.4.4"], count.index)
-
-    load_balancer_backend_address_pool_ids = count.index < 2 ? [azurerm_lb_backend_address_pool.lb_be.id] : []
   }
 }
+
 
 locals {
   cloud_init = <<EOF
 #cloud-config
 runcmd:
- - echo "Hello World from ${HOSTNAME}" > /var/www/html/index.html || true
+ - echo "Hello World from $HOSTNAME" > /var/www/html/index.html || true
  - apt-get update; apt-get install -y apache2 || true
  - systemctl enable apache2
  - systemctl start apache2
@@ -123,11 +127,12 @@ resource "azurerm_linux_virtual_machine" "vm" {
   size                = "Standard_B1s"
   admin_username      = var.admin_username
   admin_password      = var.admin_password
-  network_interface_ids = [azurerm_network_interface.nic[count.index].id]
-  admin_ssh_key {
-    username   = var.admin_username
-    public_key = "" 
-  }
+  disable_password_authentication = false
+
+  network_interface_ids = [
+    azurerm_network_interface.nic[count.index].id
+  ]
+
   os_disk {
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"
@@ -140,7 +145,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
     version   = "latest"
   }
 
-  custom_data = local.cloud_init
+  custom_data = base64encode(local.cloud_init)
 }
 
 resource "azurerm_public_ip" "appgw_pip" {
@@ -155,81 +160,120 @@ resource "azurerm_application_gateway" "appgw" {
   name                = "az104-appgw-tf"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
+
   sku {
     name     = "Standard_v2"
     tier     = "Standard_v2"
     capacity = 2
   }
+
   gateway_ip_configuration {
-    name      = "gatewayip"
+    name      = "gateway-ip"
     subnet_id = azurerm_subnet.subnet_appgw.id
   }
+
   frontend_port {
-    name = "httpPort"
+    name = "frontend-port"
     port = 80
   }
+
+  ssl_policy {
+    policy_type = "Predefined"
+    policy_name = "AppGwSslPolicy20170401S"
+  }
+
   frontend_ip_configuration {
-    name                 = "publicFrontend"
+    name                 = "public-frontend"
     public_ip_address_id = azurerm_public_ip.appgw_pip.id
   }
 
   backend_address_pool {
-    name = "az104-appgwbe"
-    ip_addresses = [azurerm_network_interface.nic[0].ip_configuration[0].private_ip_address, azurerm_network_interface.nic[1].ip_configuration[0].private_ip_address]
+    name         = "main-be"
+    ip_addresses = [
+      azurerm_network_interface.nic[0].ip_configuration[0].private_ip_address,
+      azurerm_network_interface.nic[1].ip_configuration[0].private_ip_address,
+      azurerm_network_interface.nic[2].ip_configuration[0].private_ip_address
+    ]
   }
 
   backend_address_pool {
-    name = "az104-imagebe"
-    ip_addresses = [azurerm_network_interface.nic[0].ip_configuration[0].private_ip_address]
+    name         = "image-be"
+    ip_addresses = [
+      azurerm_network_interface.nic[0].ip_configuration[0].private_ip_address
+    ]
   }
+
   backend_address_pool {
-    name = "az104-videobe"
-    ip_addresses = [azurerm_network_interface.nic[1].ip_configuration[0].private_ip_address]
+    name         = "video-be"
+    ip_addresses = [
+      azurerm_network_interface.nic[1].ip_configuration[0].private_ip_address
+    ]
   }
 
-  http_settings {
-    name                    = "az104-http"
-    cookie_based_affinity   = "Disabled"
-    port                    = 80
-    protocol                = "Http"
-    request_timeout         = 30
+  # Backend HTTP Settings
+  backend_http_settings {
+    name                  = "http-settings-main"
+    protocol              = "Http"
+    port                  = 80
+    request_timeout       = 30
+    cookie_based_affinity = "Disabled"
   }
 
-  listener {
-    name                           = "az104-listener"
-    frontend_ip_configuration_name = "publicFrontend"
-    frontend_port_name             = "httpPort"
+  backend_http_settings {
+    name                  = "http-settings-image"
+    protocol              = "Http"
+    port                  = 80
+    request_timeout       = 30
+    cookie_based_affinity = "Disabled"
+  }
+
+  backend_http_settings {
+    name                  = "http-settings-video"
+    protocol              = "Http"
+    port                  = 80
+    request_timeout       = 30
+    cookie_based_affinity = "Disabled"
+  }
+
+  # Listener
+  http_listener {
+    name                           = "main-listener"
+    frontend_ip_configuration_name = "public-frontend"
+    frontend_port_name             = "frontend-port"
     protocol                       = "Http"
   }
 
+  # Path-Based Routing
   url_path_map {
-    name               = "az104-urlmap"
-    default_backend_address_pool_name = "az104-appgwbe"
-    default_backend_http_settings_name = "az104-http"
+    name                            = "url-path-map"
+    default_backend_address_pool_name  = "main-be"
+    default_backend_http_settings_name = "http-settings-main"
 
     path_rule {
       name                       = "images"
       paths                      = ["/image/*"]
-      backend_address_pool_name  = "az104-imagebe"
-      backend_http_settings_name = "az104-http"
+      backend_address_pool_name  = "image-be"
+      backend_http_settings_name = "http-settings-image"
     }
 
     path_rule {
       name                       = "videos"
       paths                      = ["/video/*"]
-      backend_address_pool_name  = "az104-videobe"
-      backend_http_settings_name = "az104-http"
+      backend_address_pool_name  = "video-be"
+      backend_http_settings_name = "http-settings-video"
     }
   }
 
   request_routing_rule {
-    name                       = "az104-gwrule"
+    name                       = "routing-rule"
     rule_type                  = "PathBasedRouting"
-    http_listener_name         = "az104-listener"
-    url_path_map_name          = "az104-urlmap"
+    http_listener_name         = "main-listener"
+    url_path_map_name          = "url-path-map"
+    priority                   = 100
   }
 
   tags = {
     env = "lab"
   }
 }
+
