@@ -63,7 +63,6 @@ resource "azurerm_lb" "lb" {
 
 resource "azurerm_lb_backend_address_pool" "lb_be" {
   name                = "az104-be"
-  resource_group_name = azurerm_resource_group.rg.name
   loadbalancer_id     = azurerm_lb.lb.id
 }
 
